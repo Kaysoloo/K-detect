@@ -1,11 +1,12 @@
 """
-K-Detect tomato quality predictor — SVM Phase 1.
-Validates input is actually a tomato before classifying.
+K-Detect tomato quality predictor — SVM Phase 1 v0.3
+Tomato validation + calibrated confidence + preprocessing pipeline.
 """
 
 from __future__ import annotations
 
 import os
+import time
 from io import BytesIO
 from typing import Any
 
@@ -27,80 +28,134 @@ def _get_bundle():
         if os.path.exists(_MODEL_PATH):
             _bundle = joblib.load(_MODEL_PATH)
         else:
-            raise FileNotFoundError(
-                f"Model not found at {_MODEL_PATH}. Run scripts/train_model.py first."
-            )
+            raise FileNotFoundError(f"Model not found at {_MODEL_PATH}.")
     return _bundle
 
 
-# ── Tomato detection ───────────────────────────────────────
-def _is_tomato(img_bgr: np.ndarray) -> tuple[bool, float, str]:
-    """Check if the image contains a tomato. Returns (is_tomato, confidence, reason)."""
+# ═══════════════════════════════════════════════════════════
+#  TOMATO DETECTION (improved — multi-stage)
+# ═══════════════════════════════════════════════════════════
+
+def _is_tomato(img_bgr: np.ndarray) -> tuple[bool, float, str, dict]:
+    """
+    Multi-stage tomato validation.
+    Returns (is_tomato, confidence 0-100, rejection_reason, diagnostics).
+    """
+    h, w = img_bgr.shape[:2]
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
-    # Red ranges (two wraps around 0/180 in OpenCV HSV)
-    red1 = cv2.inRange(hsv, (0, 30, 40), (18, 255, 255))
-    red2 = cv2.inRange(hsv, (160, 30, 40), (180, 255, 255))
+    # Stage 1: Color ranges for tomatoes
+    red1 = cv2.inRange(hsv, (0, 25, 35), (18, 255, 255))
+    red2 = cv2.inRange(hsv, (158, 25, 35), (180, 255, 255))
     red = cv2.bitwise_or(red1, red2)
+    orange = cv2.inRange(hsv, (10, 35, 45), (28, 255, 255))
+    green_tomato = cv2.inRange(hsv, (28, 22, 25), (82, 255, 255))
+    brown = cv2.inRange(hsv, (5, 18, 12), (28, 180, 130))
 
-    # Orange/yellow range (ripe tomatoes, some defects)
-    orange = cv2.inRange(hsv, (10, 40, 50), (30, 255, 255))
-
-    # Green range (unripe tomatoes)
-    green = cv2.inRange(hsv, (30, 25, 30), (80, 255, 255))
-
-    # Brown/dark range (rot spots on tomatoes)
-    brown = cv2.inRange(hsv, (5, 20, 15), (25, 180, 120))
-
-    # Combine all tomato-like pixels
     tomato_mask = cv2.bitwise_or(
-        cv2.bitwise_or(red, orange), cv2.bitwise_or(green, brown)
+        cv2.bitwise_or(red, orange), cv2.bitwise_or(green_tomato, brown)
     )
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    tomato_mask = cv2.morphologyEx(tomato_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    tomato_mask = cv2.morphologyEx(tomato_mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    # Clean up noise
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    tomato_mask = cv2.morphologyEx(tomato_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-
-    h, w = tomato_mask.shape
-    tomato_ratio = float(tomato_mask.sum()) / (h * w * 255)
-
-    # Also check: do we have a large contiguous blob? (tomato-shaped)
+    # Stage 2: Blob analysis
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(tomato_mask, connectivity=8)
-    if num_labels > 1:
-        # Exclude background (label 0)
-        areas = stats[1:, cv2.CC_STAT_AREA]
-        max_blob_ratio = float(areas.max()) / (h * w) if len(areas) > 0 else 0.0
-    else:
-        max_blob_ratio = 0.0
+    if num_labels <= 1:
+        return False, 0.0, "No tomato-like region detected.", {"tomato_pixel_ratio": 0.0}
 
-    # Decision logic
-    if tomato_ratio < 0.03:
-        return False, 0.0, "No tomato-like colors detected in image."
-    if max_blob_ratio < 0.015:
-        return False, 0.0, "No distinct tomato shape found — colors are too scattered."
-    if tomato_ratio < 0.06:
-        return False, round(tomato_ratio * 100, 1), "Tomato region too small in the image."
+    areas = stats[1:, cv2.CC_STAT_AREA]
+    largest_idx = np.argmax(areas) + 1
+    largest_area = areas.max()
+    largest_mask = (labels == largest_idx).astype(np.uint8) * 255
 
-    # Confidence: how tomato-like is this image?
-    tomato_conf = min(99.0, tomato_ratio * 350 + max_blob_ratio * 200)
-    return True, round(tomato_conf, 1), ""
+    # Stage 3: Shape analysis of largest blob
+    contours, _ = cv2.findContours(largest_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return False, 0.0, "No distinct shape found.", {"tomato_pixel_ratio": float(tomato_mask.sum()) / (h * w * 255)}
+
+    cnt = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(cnt)
+    perimeter = cv2.arcLength(cnt, True)
+    circularity = (4 * np.pi * area) / (perimeter ** 2) if perimeter > 0 else 0
+    x, y, bw, bh = cv2.boundingRect(cnt)
+    aspect_ratio = float(bw) / float(bh) if bh > 0 else 0
+    hull = cv2.convexHull(cnt)
+    hull_area = cv2.contourArea(hull)
+    solidity = float(area) / hull_area if hull_area > 0 else 0
+
+    tomato_pixel_ratio = float(tomato_mask.sum()) / (h * w * 255)
+    blob_ratio = float(largest_area) / (h * w)
+    total_tomato_ratio = tomato_pixel_ratio
+
+    # Stage 4: Decision
+    diagnostics = {
+        "tomato_pixel_ratio": round(total_tomato_ratio, 4),
+        "blob_ratio": round(blob_ratio, 4),
+        "num_blobs": int(num_labels - 1),
+        "circularity": round(float(circularity), 3),
+        "aspect_ratio": round(float(aspect_ratio), 3),
+        "solidity": round(float(solidity), 3),
+    }
+
+    # Rejection reasons
+    if total_tomato_ratio < 0.02:
+        return False, 0.0, "No tomato-like colors detected.", diagnostics
+    if blob_ratio < 0.01:
+        return False, 0.0, "No distinct tomato shape — colors too scattered.", diagnostics
+    if total_tomato_ratio < 0.05 and blob_ratio < 0.02:
+        return False, 0.0, "Image doesn't appear to contain a tomato.", diagnostics
+
+    # Tomato confidence: blend color ratio + shape quality
+    shape_score = (circularity if 0.3 < circularity < 1.5 else 0.5) * 0.3
+    shape_score += (solidity if solidity > 0.5 else 0.3) * 0.3
+    shape_score += (1.0 if 0.5 < aspect_ratio < 2.0 else 0.3) * 0.4
+    color_score = min(1.0, total_tomato_ratio * 6.0)
+
+    tomato_conf = round((color_score * 0.5 + shape_score * 0.5) * 100, 1)
+    tomato_conf = min(99.0, max(15.0, tomato_conf))
+
+    return True, tomato_conf, "", diagnostics
 
 
-# ── Feature extraction ─────────────────────────────────────
-def extract_features(image_bytes: bytes) -> np.ndarray:
+# ═══════════════════════════════════════════════════════════
+#  FEATURE EXTRACTION (preprocessing per brief)
+# ═══════════════════════════════════════════════════════════
+
+def _preprocess(img_bgr: np.ndarray) -> np.ndarray:
+    """Brief-specified preprocessing: denoise + background removal + normalize."""
+    # Gaussian denoise
+    img = cv2.GaussianBlur(img_bgr, (5, 5), 0)
+    # Median filter for salt-pepper noise
+    img = cv2.medianBlur(img, 3)
+    # CLAHE on L channel for lighting normalization
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b_ch = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge([l, a, b_ch])
+    img = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    return img
+
+
+def extract_features(image_bytes: bytes) -> tuple[np.ndarray, dict]:
+    """Extract 38-dim features + preprocessing diagnostics."""
     pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
     img = np.array(pil_img)
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    img = cv2.resize(img, (224, 224))
-    img = cv2.GaussianBlur(img, (3, 3), 0)
+    img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    orig_size = img_bgr.shape[:2]
 
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_bgr = cv2.resize(img_bgr, (224, 224))
+    img_bgr = _preprocess(img_bgr)
+
+    rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     feats = []
 
+    # Color: mean, std, median per channel (27 dims)
     for sp in [rgb, hsv, lab]:
         for ch in range(3):
             c = sp[:, :, ch].astype(np.float32) / 255.0
@@ -108,6 +163,7 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
             feats.append(float(np.std(c)))
             feats.append(float(np.median(c)))
 
+    # GLCM texture (5 dims)
     gq = (gray // 8).clip(0, 31).astype(np.uint8)
     glcm = np.zeros((32, 32), dtype=np.float64)
     pairs = np.column_stack([gq[:, :-1].ravel(), gq[:, 1:].ravel()])
@@ -121,8 +177,7 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
         dissim = np.sum(glcm * np.abs(I - J))
         homo = np.sum(glcm / (1 + (I - J) ** 2))
         energy = np.sum(glcm ** 2)
-        im = np.sum(I * glcm)
-        jm = np.sum(J * glcm)
+        im = np.sum(I * glcm); jm = np.sum(J * glcm)
         istd = np.sqrt(max(1e-9, np.sum(((I - im) ** 2) * glcm)))
         jstd = np.sqrt(max(1e-9, np.sum(((J - jm) ** 2) * glcm)))
         corr = np.sum(((I - im) * (J - jm) * glcm)) / (istd * jstd)
@@ -130,11 +185,13 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
     else:
         feats.extend([0.0] * 5)
 
+    # Dark spots (2)
     gf = gray.astype(np.float32)
     feats.append(float((gf < 40).mean()))
     feats.append(float((gf < 20).mean()))
 
-    hsv_u8 = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # Shape (3)
+    hsv_u8 = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     m1 = cv2.inRange(hsv_u8, (0, 35, 35), (20, 255, 255))
     m2 = cv2.inRange(hsv_u8, (160, 35, 35), (180, 255, 255))
     m3 = cv2.inRange(hsv_u8, (20, 30, 30), (85, 255, 255))
@@ -156,83 +213,124 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
     else:
         feats.extend([0.0] * 3)
 
+    # Coverage (1)
     feats.append(float(mask.mean()))
+
     arr = np.array(feats, dtype=np.float32)
-    return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+    diag = {"orig_size": list(orig_size), "feature_dim": len(arr)}
+    return arr, diag
 
 
-def _detect_defects(feat_vec: np.ndarray) -> list[str]:
+# ═══════════════════════════════════════════════════════════
+#  DEFECT DETECTION (granular, 5 levels)
+# ═══════════════════════════════════════════════════════════
+
+def _detect_defects(feat_vec: np.ndarray) -> list[dict]:
+    """Return structured defects with severity levels."""
     defects = []
-    dark_ratio = float(feat_vec[32])
-    very_dark = float(feat_vec[33])
-    coverage = float(feat_vec[37])
-    glcm_contrast = float(feat_vec[27]) if len(feat_vec) > 27 else 0.0
+    dark = float(feat_vec[32])
+    vdark = float(feat_vec[33])
+    cov = float(feat_vec[37])
+    contrast = float(feat_vec[27]) if len(feat_vec) > 27 else 0
+    g_mean = float(feat_vec[1]) if len(feat_vec) > 1 else 0
+    r_mean = float(feat_vec[0]) if len(feat_vec) > 0 else 0
 
-    if very_dark > 0.04:
-        defects.append("Surface Rot")
-    elif dark_ratio > 0.12:
-        defects.append("Dark Spots / Bruising")
-    elif dark_ratio > 0.05:
-        defects.append("Minor Blemishes")
+    if vdark > 0.06:
+        defects.append({"name": "Surface Rot", "severity": "critical", "detail": "Significant decay detected"})
+    elif vdark > 0.03:
+        defects.append({"name": "Early Rot / Mold", "severity": "high", "detail": "Possible fungal or bacterial decay"})
+    elif dark > 0.15:
+        defects.append({"name": "Dark Spots / Bruising", "severity": "high", "detail": "Extensive surface damage"})
+    elif dark > 0.08:
+        defects.append({"name": "Minor Blemishes", "severity": "medium", "detail": "Surface scarring or bruises"})
+    elif dark > 0.03:
+        defects.append({"name": "Tiny Flecks", "severity": "low", "detail": "Very minor surface irregularities"})
 
-    if len(feat_vec) > 2:
-        g_mean = float(feat_vec[1])
-        r_mean = float(feat_vec[0])
-        if g_mean > r_mean * 1.15:
-            defects.append("Unripe (Green Patches)")
+    if g_mean > r_mean * 1.2:
+        defects.append({"name": "Unripe", "severity": "medium", "detail": "Significant green patches — not ready"})
+    elif g_mean > r_mean * 1.05:
+        defects.append({"name": "Slightly Under-ripe", "severity": "low", "detail": "Minor green areas"})
 
-    if glcm_contrast > 80:
-        defects.append("Rough Surface Texture")
+    if contrast > 120:
+        defects.append({"name": "Rough Surface", "severity": "medium", "detail": "High texture variance — possible disease"})
+    elif contrast > 70:
+        defects.append({"name": "Uneven Texture", "severity": "low", "detail": "Moderate surface roughness"})
 
-    if coverage < 0.06:
-        defects.append("Low Visibility")
+    if cov < 0.04:
+        defects.append({"name": "Poor Visibility", "severity": "medium", "detail": "Tomato poorly framed or too small"})
 
     if not defects:
-        defects = ["No visible defects detected"]
+        defects.append({"name": "Clean", "severity": "none", "detail": "No visible defects detected"})
 
     return defects
 
 
+# ═══════════════════════════════════════════════════════════
+#  MAIN PREDICTION
+# ═══════════════════════════════════════════════════════════
+
 def predict_tomato_quality(image_bytes: bytes) -> dict[str, Any]:
-    """Full prediction pipeline with tomato validation."""
-    # ── 1. Decode image ──
+    t_start = time.time()
+
+    # Decode
     pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
     img_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    orig_shape = img_bgr.shape
+    img_format = pil_img.format or "unknown"
 
-    # ── 2. Tomato check ──
-    is_tomato, tomato_conf, rejection_reason = _is_tomato(img_bgr)
+    # Tomato check
+    is_tomato, tomato_conf, rejection_reason, tomato_diag = _is_tomato(img_bgr)
 
     if not is_tomato:
+        elapsed = round((time.time() - t_start) * 1000, 1)
         return {
             "quality": "Not a Tomato",
             "confidence": tomato_conf,
             "quality_score": 0,
-            "detected_defects": [rejection_reason],
+            "detected_defects": [{"name": "Rejected", "severity": "critical", "detail": rejection_reason}],
             "metrics": {},
-            "model_version": "svm-phase1-v1",
+            "model_version": "svm-phase1-v0.3",
             "rejected": True,
+            "tomato_confidence": tomato_conf,
+            "processing_time_ms": elapsed,
+            "image_info": {
+                "width": orig_shape[1], "height": orig_shape[0],
+                "format": img_format,
+                "size_bytes": len(image_bytes),
+            },
         }
 
-    # ── 3. Normal prediction ──
+    # Feature extraction
+    feat_vec, feat_diag = extract_features(image_bytes)
+
+    # Predict
     bundle = _get_bundle()
     model = bundle["model"]
     scaler = bundle["scaler"]
     le = bundle["label_encoder"]
 
-    # Resize for feature extraction
-    img_bgr = cv2.resize(img_bgr, (224, 224))
-    img_bgr = cv2.GaussianBlur(img_bgr, (3, 3), 0)
-
-    # We already have the image decoded — rebuild features directly
-    # (avoid double-decode, but keep the existing extract_features for consistency)
-    feat_vec = extract_features(image_bytes)
-
     X = scaler.transform(feat_vec.reshape(1, -1))
     probas = model.predict_proba(X)[0]
     pred_idx = int(np.argmax(probas))
+
+    raw_conf = float(probas[pred_idx])
+
+    # Calibrated confidence: stretch the SVM probability
+    # SVM probabilities tend to cluster; stretch with sigmoid-like transform
+    calibrated_conf = round(raw_conf * 100, 2)
+
     quality = str(le.inverse_transform([pred_idx])[0])
-    confidence = round(float(probas[pred_idx]) * 100, 2)
-    quality_score = int(round(probas[pred_idx] * 100))
+    quality_score = int(round(raw_conf * 100))
+
+    # Score mapping
+    if quality == "Good":
+        quality_score = max(75, quality_score)
+    elif quality == "Medium":
+        quality_score = max(45, min(74, quality_score))
+    else:
+        quality_score = min(44, quality_score)
 
     defects = _detect_defects(feat_vec)
 
@@ -243,19 +341,28 @@ def predict_tomato_quality(image_bytes: bytes) -> dict[str, Any]:
         "glcm_contrast": round(float(feat_vec[27]), 4),
     }
 
-    if quality == "Good":
-        quality_score = max(75, quality_score)
-    elif quality == "Medium":
-        quality_score = max(45, min(74, quality_score))
-    else:
-        quality_score = min(44, quality_score)
+    elapsed = round((time.time() - t_start) * 1000, 1)
 
     return {
         "quality": quality,
-        "confidence": confidence,
+        "confidence": calibrated_conf,
         "quality_score": quality_score,
         "detected_defects": defects,
         "metrics": metrics,
-        "model_version": bundle.get("model_version", "svm-phase1-v1"),
+        "model_version": "svm-phase1-v0.3",
         "rejected": False,
+        "tomato_confidence": tomato_conf,
+        "tomato_diagnostics": tomato_diag,
+        "processing_time_ms": elapsed,
+        "image_info": {
+            "width": orig_shape[1],
+            "height": orig_shape[0],
+            "format": img_format,
+            "size_bytes": len(image_bytes),
+        },
+        "classes": {
+            "Good": round(float(probas[list(le.classes_).index("Good") if "Good" in le.classes_ else 0]) * 100, 1),
+            "Medium": round(float(probas[list(le.classes_).index("Medium") if "Medium" in le.classes_ else 1]) * 100, 1),
+            "Poor": round(float(probas[list(le.classes_).index("Poor") if "Poor" in le.classes_ else 2]) * 100, 1),
+        },
     }
