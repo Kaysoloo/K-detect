@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Data
+data/tomato_dataset/
+data/FGrade/
+data/kdetect.db
+data/*.db
+
+# IDE
+.vscode/
+.idea/
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
