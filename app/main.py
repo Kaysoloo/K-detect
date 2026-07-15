@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 import os
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
-from app.database import init_db, list_predictions, save_prediction
+from app.database import init_db, save_prediction
 from app.ml.predictor import predict_tomato_quality
 
-ALLOWED_TYPES = {"image/jpeg", "image/png", "image/jpg"}
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/jpg", "image/webp"}
 
-# Project root for resolving file paths
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INDEX_PATH = os.path.join(ROOT, "frontend", "index.html")
 
 app = FastAPI(
     title="K-Detect API",
-    description="AI-powered tomato quality detection MVP",
-    version="0.1.0",
+    description="AI-powered tomato quality detection",
+    version="0.2.0",
 )
 
 app.add_middleware(
@@ -42,13 +41,13 @@ def home() -> HTMLResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "K-Detect"}
+    return {"status": "ok", "service": "K-Detect", "version": "0.2.0"}
 
 
 @app.post("/api/predict")
 async def predict(file: UploadFile = File(...)) -> dict:
     if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail="Upload a JPG, JPEG, or PNG tomato image.")
+        raise HTTPException(status_code=400, detail="Upload a JPG, JPEG, PNG, or WebP image.")
     image_bytes = await file.read()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Uploaded image is empty.")
@@ -56,11 +55,11 @@ async def predict(file: UploadFile = File(...)) -> dict:
         result = predict_tomato_quality(image_bytes)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"Could not process image: {exc}") from exc
-    prediction_id = save_prediction(file.filename or "uploaded-image", result)
-    return {"id": prediction_id, **result}
 
+    # Silently save for analytics but don't expose history endpoint
+    try:
+        save_prediction(file.filename or "uploaded-image", result)
+    except Exception:
+        pass  # never fail on DB write
 
-@app.get("/api/history")
-def history(limit: int = 25) -> dict:
-    limit = max(1, min(limit, 100))
-    return {"items": list_predictions(limit=limit)}
+    return result

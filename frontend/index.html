@@ -1,226 +1,484 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>K-Detect | Tomato Quality Detection</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>K-Detect | AI Tomato Quality Scanner</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍅</text></svg>"/>
   <style>
-    :root { --green:#1f7a4d; --red:#d8332a; --orange:#f59e0b; --ink:#17212b; --muted:#657384; --bg:#f6f8f5; --card:#ffffff; }
-    * { box-sizing: border-box; }
-    body { margin:0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; background: radial-gradient(circle at top left,#e8f7ef,transparent 30%), var(--bg); color:var(--ink); }
-    header { padding:34px 20px 20px; text-align:center; }
-    .brand { display:inline-flex; gap:10px; align-items:center; font-weight:900; color:var(--green); font-size:32px; }
-    .logo { width:44px; height:44px; border-radius:50%; background:linear-gradient(135deg,#ef4444,#b91c1c); box-shadow: inset -8px -8px 0 rgba(0,0,0,.08); position:relative; }
-    .logo:before { content:""; position:absolute; width:20px; height:12px; background:#26884f; border-radius:100% 0; left:12px; top:-5px; transform:rotate(-25deg); }
-    .tagline { margin:8px auto 0; color:var(--muted); max-width:760px; font-size:17px; }
-    main { max-width:1120px; margin:0 auto; padding:20px; display:grid; grid-template-columns: 1.05fr .95fr; gap:22px; }
-    .card { background:rgba(255,255,255,.92); border:1px solid rgba(31,122,77,.12); border-radius:24px; padding:22px; box-shadow:0 18px 50px rgba(25,55,35,.10); }
-    h1,h2,h3 { margin:0; }
-    h2 { font-size:22px; margin-bottom:14px; }
-    .upload { border:2px dashed rgba(31,122,77,.35); border-radius:20px; padding:24px; text-align:center; background:#fbfdfb; transition:.2s; }
-    .upload.drag { border-color:var(--green); background:#edf8f2; transform:scale(1.01); }
-    input[type=file] { display:none; }
-    .btn { border:0; border-radius:999px; padding:12px 24px; background:var(--green); color:white; font-weight:800; cursor:pointer; box-shadow:0 10px 24px rgba(31,122,77,.25); font-size:15px; }
-    .btn.secondary { background:#eef6f1; color:var(--green); box-shadow:none; }
-    .btn:disabled { opacity:.55; cursor:not-allowed; }
-    .preview { margin-top:18px; display:none; gap:18px; align-items:flex-start; }
-    .preview img { width:240px; max-width:100%; border-radius:18px; object-fit:cover; box-shadow:0 12px 30px rgba(0,0,0,.16); }
-    .resultHero { display:grid; place-items:center; min-height:250px; border-radius:22px; background:linear-gradient(135deg,#fff,#edf8f2); border:1px solid #e6eee8; text-align:center; padding:24px; }
-    .scoreRing { width:150px; height:150px; border-radius:50%; display:grid; place-items:center; background:conic-gradient(var(--green) calc(var(--score,0)*1%), #e5e7eb 0); margin:auto; }
-    .scoreInner { width:114px; height:114px; border-radius:50%; background:white; display:grid; place-items:center; font-size:34px; font-weight:900; }
-    .quality { font-size:30px; font-weight:950; margin-top:14px; }
-    .pill { display:inline-flex; padding:7px 13px; border-radius:999px; background:#eef6f1; color:var(--green); font-weight:800; margin:4px; font-size:14px; }
-    .pill.warn { background:#fff7ed; color:#c2410c; }
-    .pill.danger { background:#fef2f2; color:#b91c1c; }
-    .metrics { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-top:16px; }
-    .metric { background:#f7faf8; padding:12px; border-radius:14px; border:1px solid #edf1ee; }
-    .metric b { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; text-transform:uppercase; letter-spacing:.03em; }
-    .metric span { font-size:20px; font-weight:900; }
-    .modelBadge { font-size:11px; color:var(--muted); background:#f0f0f0; padding:3px 10px; border-radius:999px; margin-top:8px; display:inline-block; }
-    table { width:100%; border-collapse:collapse; font-size:14px; }
-    th,td { text-align:left; padding:10px 8px; border-bottom:1px solid #edf1ee; vertical-align:top; }
-    th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
-    .status { color:var(--muted); margin-top:12px; min-height:22px; }
-    .error { color:#b91c1c; font-weight:700; }
-    .hidden { display:none; }
-    footer { max-width:1120px; margin:0 auto 30px; padding:0 20px; color:var(--muted); font-size:14px; }
-    @media(max-width:850px){ main{grid-template-columns:1fr;} .preview{flex-direction:column;} }
+    :root {
+      --red: #ef4444; --red-glow: #f87171; --green: #22c55e; --amber: #f59e0b;
+      --bg: #0a0a0a; --surface: #171717; --card: #1e1e1e; --border: #2a2a2a;
+      --text: #f5f5f5; --muted: #a3a3a3; --radius: 20px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Animated gradient background ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: -2;
+      background:
+        radial-gradient(ellipse 80% 60% at 50% -20%, rgba(239,68,68,.12), transparent),
+        radial-gradient(ellipse 60% 50% at 80% 80%, rgba(34,197,94,.06), transparent),
+        radial-gradient(ellipse 50% 40% at 20% 60%, rgba(245,158,11,.05), transparent);
+    }
+
+    /* ── Floating orbs ── */
+    .orb {
+      position: fixed; border-radius: 50%; z-index: -1;
+      filter: blur(80px); opacity: .25; pointer-events: none;
+    }
+    .orb-1 { width: 400px; height: 400px; background: var(--red); top: -100px; left: -100px; animation: float 20s ease-in-out infinite; }
+    .orb-2 { width: 300px; height: 300px; background: var(--amber); bottom: -80px; right: -80px; animation: float 24s ease-in-out 5s infinite; }
+    .orb-3 { width: 250px; height: 250px; background: var(--green); top: 50%; left: 50%; animation: float 18s ease-in-out 10s infinite; }
+
+    @keyframes float {
+      0%, 100% { transform: translate(0,0) scale(1); }
+      25% { transform: translate(40px,-30px) scale(1.08); }
+      50% { transform: translate(-20px,20px) scale(.94); }
+      75% { transform: translate(-35px,-15px) scale(1.05); }
+    }
+
+    /* ── Layout ── */
+    .container { max-width: 960px; margin: 0 auto; padding: 24px 20px 60px; }
+
+    /* ── Header ── */
+    header { text-align: center; padding: 50px 20px 30px; }
+    .logo-row { display: inline-flex; align-items: center; gap: 14px; position: relative; }
+    .logo-icon {
+      width: 56px; height: 56px; border-radius: 16px;
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      display: grid; place-items: center; font-size: 30px;
+      box-shadow: 0 0 40px rgba(239,68,68,.35);
+      animation: pulse-glow 3s ease-in-out infinite;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 30px rgba(239,68,68,.3); }
+      50% { box-shadow: 0 0 60px rgba(239,68,68,.55); }
+    }
+    h1 { font-size: 40px; font-weight: 900; letter-spacing: -.02em; }
+    h1 span { color: var(--red); }
+    .subtitle { color: var(--muted); font-size: 17px; margin-top: 12px; max-width: 600px; margin-left: auto; margin-right: auto; line-height: 1.6; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px;
+      backdrop-filter: blur(12px);
+      transition: border-color .3s, box-shadow .3s;
+    }
+    .card:hover { border-color: #3a3a3a; box-shadow: 0 0 40px rgba(255,255,255,.02); }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+    h2 { font-size: 22px; font-weight: 800; margin-bottom: 20px; letter-spacing: -.01em; }
+
+    /* ── Upload zone ── */
+    .dropzone {
+      border: 2px dashed #333;
+      border-radius: 18px;
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all .25s;
+      background: rgba(255,255,255,.015);
+      position: relative;
+      overflow: hidden;
+    }
+    .dropzone:hover, .dropzone.drag {
+      border-color: var(--red);
+      background: rgba(239,68,68,.04);
+      box-shadow: inset 0 0 50px rgba(239,68,68,.04);
+    }
+    .dropzone.drag { transform: scale(1.02); }
+    .drop-icon { font-size: 52px; margin-bottom: 14px; display: block; }
+    .dropzone p { color: var(--muted); font-size: 15px; margin-bottom: 6px; }
+    .dropzone strong { color: var(--text); }
+    .browse-btn {
+      display: inline-block; margin-top: 16px; padding: 12px 28px;
+      border-radius: 999px; background: var(--red);
+      color: #fff; font-weight: 700; font-size: 15px;
+      cursor: pointer; border: none; transition: all .2s;
+      box-shadow: 0 4px 20px rgba(239,68,68,.25);
+    }
+    .browse-btn:hover { background: #dc2626; box-shadow: 0 6px 28px rgba(239,68,68,.4); transform: translateY(-1px); }
+    input[type=file] { display: none; }
+
+    /* ── Preview ── */
+    .preview-panel { display: none; margin-top: 20px; gap: 18px; align-items: center; }
+    .preview-panel img {
+      width: 180px; height: 180px; border-radius: 16px;
+      object-fit: cover; border: 2px solid var(--border);
+      box-shadow: 0 12px 40px rgba(0,0,0,.4);
+    }
+    .preview-meta { flex: 1; }
+    .preview-meta h3 { font-size: 16px; margin-bottom: 4px; color: var(--text); }
+    .preview-meta .fname { font-size: 13px; color: var(--muted); margin-bottom: 14px; word-break: break-all; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      border: none; border-radius: 999px; padding: 11px 24px;
+      font-weight: 700; font-size: 14px; cursor: pointer;
+      transition: all .2s; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--red); color: #fff; box-shadow: 0 4px 18px rgba(239,68,68,.25); }
+    .btn-primary:hover { background: #dc2626; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: .4; pointer-events: none; }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid #333; }
+    .btn-ghost:hover { color: #fff; border-color: #555; }
+
+    /* ── Loading spinner ── */
+    .spinner { display: none; width: 20px; height: 20px; border: 2.5px solid #333; border-top-color: var(--red); border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Result card ── */
+    .result-empty, .result-content {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; min-height: 300px; text-align: center;
+    }
+    .result-content { display: none; }
+    .result-empty .placeholder-icon { font-size: 64px; opacity: .3; margin-bottom: 16px; }
+    .result-empty .placeholder-text { color: var(--muted); font-size: 15px; }
+
+    /* Score ring */
+    .score-wrap { position: relative; width: 160px; height: 160px; margin-bottom: 20px; }
+    .score-ring {
+      width: 160px; height: 160px; border-radius: 50%;
+      background: conic-gradient(var(--ring-color, #555) 0%, #222 0%);
+      display: grid; place-items: center;
+      box-shadow: 0 0 40px rgba(0,0,0,.3);
+      transition: background .8s cubic-bezier(.4,0,.2,1);
+    }
+    .score-inner {
+      width: 124px; height: 124px; border-radius: 50%;
+      background: #111; display: grid; place-items: center;
+      font-size: 42px; font-weight: 900;
+    }
+    .score-glow {
+      position: absolute; inset: -12px; border-radius: 50%;
+      background: radial-gradient(circle, var(--ring-glow, transparent) 0%, transparent 70%);
+      opacity: .25; pointer-events: none;
+    }
+
+    .quality-label { font-size: 32px; font-weight: 900; margin-bottom: 4px; }
+    .conf-label { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+
+    /* Defect pills */
+    .pills { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 22px; }
+    .pill {
+      padding: 7px 15px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    }
+    .pill-ok { background: rgba(34,197,94,.12); color: var(--green); }
+    .pill-warn { background: rgba(245,158,11,.12); color: var(--amber); }
+    .pill-bad { background: rgba(239,68,68,.12); color: var(--red-glow); }
+    .pill-reject { background: rgba(239,68,68,.15); color: #fca5a5; }
+
+    /* Metrics mini */
+    .metric-row { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; width: 100%; }
+    .metric-box {
+      background: rgba(255,255,255,.025); border: 1px solid #2a2a2a;
+      border-radius: 14px; padding: 14px;
+    }
+    .metric-box .metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .metric-box .metric-value { font-size: 22px; font-weight: 900; margin-top: 4px; }
+
+    /* Rejection banner */
+    .reject-banner {
+      background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.2);
+      border-radius: 16px; padding: 20px 24px; text-align: center; margin-top: 20px;
+    }
+    .reject-banner .reject-icon { font-size: 44px; margin-bottom: 10px; }
+    .reject-banner .reject-title { font-size: 20px; font-weight: 800; color: var(--red-glow); margin-bottom: 6px; }
+    .reject-banner .reject-msg { color: var(--muted); font-size: 14px; }
+
+    /* Footer */
+    footer { text-align: center; padding: 30px 20px 40px; color: var(--muted); font-size: 13px; }
+    footer a { color: var(--red-glow); text-decoration: none; }
+
+    .hidden { display: none !important; }
+
+    /* ── Particles ── */
+    .particle {
+      position: fixed; pointer-events: none; z-index: 999;
+      width: 8px; height: 8px; border-radius: 50%;
+      animation: particle-up 1.2s ease-out forwards;
+    }
+    @keyframes particle-up {
+      0% { opacity: 1; transform: translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateY(-160px) translateX(var(--px,0px)) scale(0); }
+    }
   </style>
 </head>
 <body>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+
   <header>
-    <div class="brand"><span class="logo"></span><span>K-Detect</span></div>
-    <p class="tagline">Smart Tomato Quality Detection Through Computer Vision and Machine Learning.</p>
+    <div class="logo-row">
+      <div class="logo-icon">🍅</div>
+      <h1><span>K</span>-Detect</h1>
+    </div>
+    <p class="subtitle">AI-powered tomato quality scanner. Upload a photo — instantly classify as <strong style="color:var(--green)">Good</strong>, <strong style="color:var(--amber)">Medium</strong>, or <strong style="color:var(--red)">Poor</strong> using computer vision & SVM.</p>
   </header>
 
-  <main>
-    <section class="card">
-      <h2>Upload Tomato Image</h2>
-      <div id="dropzone" class="upload">
-        <p><strong>Drop a JPG/PNG image here</strong> or choose from your device.</p>
-        <p style="color:var(--muted)">The model analyzes color, texture (GLCM), dark spots, and shape — SVM Phase 1.</p>
-        <label class="btn" for="fileInput">Choose Image</label>
-        <input id="fileInput" type="file" accept="image/png,image/jpeg" />
-      </div>
-      <div id="preview" class="preview">
-        <img id="previewImg" alt="Tomato preview" />
-        <div>
-          <h3 id="fileName">Selected image</h3>
-          <p class="status" id="status">Ready to analyze.</p>
-          <button id="analyzeBtn" class="btn">Analyze Quality</button>
-          <button id="clearBtn" class="btn secondary">Clear</button>
-        </div>
-      </div>
-    </section>
+  <div class="container">
+    <div class="grid">
 
-    <section class="card">
-      <h2>Result Dashboard</h2>
-      <div id="emptyResult" class="resultHero">
-        <div>
-          <div class="scoreRing" style="--score:0"><div class="scoreInner">--</div></div>
-          <p class="quality">Awaiting image</p>
-          <p style="color:var(--muted)">Upload a tomato image and click Analyze.</p>
+      <!-- Upload card -->
+      <div class="card" id="uploadCard">
+        <h2>📤 Upload Image</h2>
+        <div class="dropzone" id="dropzone">
+          <span class="drop-icon">🥫</span>
+          <p><strong>Drop a tomato image here</strong></p>
+          <p>JPG, PNG, or WebP — max 10 MB</p>
+          <label class="browse-btn" for="fileInput">Browse Files</label>
+          <input id="fileInput" type="file" accept="image/png,image/jpeg,image/webp"/>
         </div>
-      </div>
-      <div id="result" class="hidden">
-        <div class="resultHero">
-          <div>
-            <div id="scoreRing" class="scoreRing"><div id="scoreText" class="scoreInner">0</div></div>
-            <div id="quality" class="quality">--</div>
-            <div id="confidence" style="color:var(--muted);font-weight:800"></div>
-            <div id="defects" style="margin-top:12px"></div>
-            <div id="modelBadge" class="modelBadge"></div>
+        <div class="preview-panel" id="previewPanel">
+          <img id="previewImg" alt="Preview"/>
+          <div class="preview-meta">
+            <h3>Ready to scan</h3>
+            <div class="fname" id="fnameDisplay"></div>
+            <div class="btn-row">
+              <button class="btn btn-primary" id="scanBtn">
+                <span>🔍 Scan Quality</span>
+                <span class="spinner" id="spinner"></span>
+              </button>
+              <button class="btn btn-ghost" id="clearBtn">✕ Clear</button>
+            </div>
           </div>
         </div>
-        <div id="metrics" class="metrics"></div>
       </div>
-    </section>
 
-    <section class="card" style="grid-column:1 / -1">
-      <h2>Prediction History</h2>
-      <table>
-        <thead><tr><th>ID</th><th>File</th><th>Prediction</th><th>Score</th><th>Defects</th><th>Date</th></tr></thead>
-        <tbody id="history"><tr><td colspan="6" style="color:var(--muted)">No predictions yet.</td></tr></tbody>
-      </table>
-    </section>
-  </main>
+      <!-- Result card -->
+      <div class="card" id="resultCard">
+        <h2>📊 Results</h2>
+        <div class="result-empty" id="resultEmpty">
+          <div class="placeholder-icon">🔬</div>
+          <p class="placeholder-text">Upload a tomato image<br>and click <strong>Scan Quality</strong></p>
+        </div>
+        <div class="result-content" id="resultContent">
+          <div class="score-wrap">
+            <div class="score-glow" id="scoreGlow"></div>
+            <div class="score-ring" id="scoreRing">
+              <div class="score-inner" id="scoreText">0</div>
+            </div>
+          </div>
+          <div class="quality-label" id="qualityLabel">--</div>
+          <div class="conf-label" id="confLabel"></div>
+          <div class="pills" id="defectPills"></div>
+          <div class="metric-row" id="metricRow"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Rejection banner (hidden by default) -->
+    <div class="reject-banner hidden" id="rejectBanner">
+      <div class="reject-icon">🚫</div>
+      <div class="reject-title">Not a Tomato</div>
+      <div class="reject-msg" id="rejectMsg"></div>
+    </div>
+  </div>
 
   <footer>
-    K-Detect SVM Phase 1 · 38-dim handcrafted features (color, GLCM texture, shape) · 
-    <a href="https://github.com/skarifahmed/FGrade" target="_blank" rel="noopener">FGrade dataset</a> (MIT)
+    <p>K-Detect · SVM Phase 1 · 38-dim handcrafted features · <a href="https://github.com/skarifahmed/FGrade" target="_blank" rel="noopener">FGrade dataset</a> (MIT)</p>
   </footer>
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-//  API CONFIG — auto-detects deployment
-//  - Same-origin (Vercel): uses relative /api/* paths
-//  - External (Render/Railway): add ?api=https://xxx.onrender.com
-// ═══════════════════════════════════════════════════════════════
-const urlParams = new URLSearchParams(window.location.search);
-const API_BASE = urlParams.get('api') || '';
-
-function apiUrl(path) {
-  return API_BASE ? API_BASE + '/api' + path : '/api' + path;
-}
-
+// ── DOM refs ──
 const fileInput = document.getElementById('fileInput');
 const dropzone = document.getElementById('dropzone');
-const preview = document.getElementById('preview');
+const previewPanel = document.getElementById('previewPanel');
 const previewImg = document.getElementById('previewImg');
-const fileName = document.getElementById('fileName');
-const statusEl = document.getElementById('status');
-const analyzeBtn = document.getElementById('analyzeBtn');
+const fnameDisplay = document.getElementById('fnameDisplay');
+const scanBtn = document.getElementById('scanBtn');
 const clearBtn = document.getElementById('clearBtn');
-const result = document.getElementById('result');
-const emptyResult = document.getElementById('emptyResult');
+const spinner = document.getElementById('spinner');
+const resultEmpty = document.getElementById('resultEmpty');
+const resultContent = document.getElementById('resultContent');
+const scoreRing = document.getElementById('scoreRing');
+const scoreGlow = document.getElementById('scoreGlow');
+const scoreText = document.getElementById('scoreText');
+const qualityLabel = document.getElementById('qualityLabel');
+const confLabel = document.getElementById('confLabel');
+const defectPills = document.getElementById('defectPills');
+const metricRow = document.getElementById('metricRow');
+const rejectBanner = document.getElementById('rejectBanner');
+const rejectMsg = document.getElementById('rejectMsg');
+
 let selectedFile = null;
 
-function setFile(file){
-  if(!file) return;
+// ── File selection ──
+function handleFile(file) {
+  if (!file || !file.type.match(/image\/(jpeg|png|webp)/)) {
+    alert('Please select a JPG, PNG, or WebP image.');
+    return;
+  }
   selectedFile = file;
-  fileName.textContent = file.name;
   previewImg.src = URL.createObjectURL(file);
-  preview.style.display = 'flex';
-  statusEl.textContent = 'Ready to analyze.';
-  statusEl.classList.remove('error');
-}
-fileInput.addEventListener('change', e => setFile(e.target.files[0]));
-['dragenter','dragover'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
-['dragleave','drop'].forEach(evt => dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
-dropzone.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
-clearBtn.addEventListener('click', () => { selectedFile=null; fileInput.value=''; preview.style.display='none'; });
-
-function qualityColor(q){ return q === 'Good' ? '#1f7a4d' : q === 'Medium' ? '#f59e0b' : '#d8332a'; }
-
-function defectPillClass(d) {
-  if (/rot|mold|severe/i.test(d)) return 'danger';
-  if (/spot|bruis|blemish|dark/i.test(d)) return 'warn';
-  return '';
+  fnameDisplay.textContent = file.name;
+  previewPanel.style.display = 'flex';
+  resultContent.style.display = 'none';
+  resultEmpty.style.display = 'flex';
+  rejectBanner.classList.add('hidden');
 }
 
-function renderPrediction(data){
-  emptyResult.classList.add('hidden'); result.classList.remove('hidden');
-  const color = qualityColor(data.quality);
-  document.getElementById('scoreRing').style.setProperty('--score', data.quality_score);
-  document.getElementById('scoreRing').style.background = `conic-gradient(${color} ${data.quality_score}%, #e5e7eb 0)`;
-  document.getElementById('scoreText').textContent = data.quality_score;
-  const qEl = document.getElementById('quality');
-  qEl.textContent = data.quality; qEl.style.color = color;
-  document.getElementById('confidence').textContent = `Confidence: ${data.confidence}%`;
-  document.getElementById('defects').innerHTML = data.detected_defects.map(d => {
-    const cls = defectPillClass(d);
-    return `<span class="pill ${cls}">${d}</span>`;
-  }).join('');
-  document.getElementById('modelBadge').textContent = 'Model: ' + (data.model_version || 'svm');
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
 
-  // Show metrics from the model
-  const m = data.metrics || {};
-  const metricLabels = {
-    dark_spot_ratio: 'Dark Spots',
-    very_dark_ratio: 'Severe Rot',
-    coverage: 'Tomato Coverage',
-    glcm_contrast: 'Texture Contrast'
-  };
-  document.getElementById('metrics').innerHTML = Object.entries(metricLabels).map(([k,l]) => {
-    const v = m[k] !== undefined ? (k.includes('ratio') || k.includes('coverage') ? (m[k]*100).toFixed(1)+'%' : m[k].toFixed(1)) : '--';
-    return `<div class="metric"><b>${l}</b><span>${v}</span></div>`;
-  }).join('');
-}
+dropzone.addEventListener('click', () => fileInput.click());
+['dragenter','dragover'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('drag'); }));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('drag'); }));
+dropzone.addEventListener('drop', e => { if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
 
-async function loadHistory(){
-  try{
-    const res = await fetch(apiUrl('/history'));
-    if(!res.ok) return;
-    const data = await res.json();
-    const rows = data.items || [];
-    document.getElementById('history').innerHTML = rows.length
-      ? rows.map(r => `<tr><td>${r.id}</td><td>${r.filename}</td><td><strong>${r.prediction}</strong></td><td>${r.quality_score}</td><td>${r.defects.join(', ')}</td><td>${r.created_at}</td></tr>`).join('')
-      : '<tr><td colspan="6" style="color:var(--muted)">No predictions yet.</td></tr>';
-  } catch(e) { /* backend not available yet — fine */ }
-}
-
-analyzeBtn.addEventListener('click', async () => {
-  if(!selectedFile) return;
-  analyzeBtn.disabled = true;
-  statusEl.textContent = 'Analyzing...'; statusEl.classList.remove('error');
-  const form = new FormData(); form.append('file', selectedFile);
-  try{
-    const res = await fetch(apiUrl('/predict'), {method:'POST', body:form});
-    if(!res.ok) {
-      const err = await res.json().catch(()=>({}));
-      throw new Error(err.detail || 'Prediction failed');
-    }
-    const data = await res.json();
-    renderPrediction(data);
-    statusEl.textContent = 'Analysis complete.';
-    loadHistory();
-  } catch(err){
-    statusEl.textContent = 'Error: ' + err.message;
-    statusEl.classList.add('error');
-  } finally { analyzeBtn.disabled = false; }
+clearBtn.addEventListener('click', () => {
+  selectedFile = null; fileInput.value = '';
+  previewPanel.style.display = 'none';
+  resultContent.style.display = 'none';
+  resultEmpty.style.display = 'flex';
+  rejectBanner.classList.add('hidden');
 });
 
-loadHistory();
+// ── Particles ──
+function spawnParticles(color) {
+  for (let i = 0; i < 30; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.background = color;
+    p.style.left = (40 + Math.random() * 20) + '%';
+    p.style.top = (30 + Math.random() * 10) + '%';
+    p.style.setProperty('--px', (Math.random() - .5) * 200 + 'px');
+    p.style.animationDuration = (.8 + Math.random() * 1.2) + 's';
+    p.style.animationDelay = (Math.random() * .3) + 's';
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 1800);
+  }
+}
+
+// ── Quality color ──
+function qualityColor(q) {
+  if (q === 'Good') return '#22c55e';
+  if (q === 'Medium') return '#f59e0b';
+  return '#ef4444';
+}
+
+function qualityGlow(q) {
+  if (q === 'Good') return 'rgba(34,197,94,.4)';
+  if (q === 'Medium') return 'rgba(245,158,11,.35)';
+  return 'rgba(239,68,68,.4)';
+}
+
+// ── Render ──
+function renderResult(data) {
+  resultEmpty.style.display = 'none';
+  resultContent.style.display = 'flex';
+  rejectBanner.classList.add('hidden');
+
+  if (data.rejected) {
+    // ── Rejected ──
+    resultContent.style.display = 'none';
+    resultEmpty.style.display = 'flex';
+    rejectBanner.classList.remove('hidden');
+    rejectMsg.textContent = data.detected_defects?.[0] || 'This image does not appear to contain a tomato.';
+    return;
+  }
+
+  const color = qualityColor(data.quality);
+  const glow = qualityGlow(data.quality);
+  const score = data.quality_score;
+
+  // Animate score ring
+  scoreRing.style.setProperty('--ring-color', color);
+  scoreRing.style.background = `conic-gradient(${color} 0%, #222 0%)`;
+  scoreGlow.style.setProperty('--ring-glow', glow);
+
+  // Animate score number
+  let current = 0;
+  const target = score;
+  const step = Math.max(1, Math.ceil(target / 40));
+  const interval = setInterval(() => {
+    current += step;
+    if (current >= target) { current = target; clearInterval(interval); }
+    scoreText.textContent = current;
+    scoreRing.style.background = `conic-gradient(${color} ${current}%, #222 0%)`;
+  }, 25);
+
+  qualityLabel.textContent = data.quality;
+  qualityLabel.style.color = color;
+  confLabel.textContent = `Model confidence: ${data.confidence}%`;
+
+  // Defect pills
+  const pillStyles = {
+    'No visible defects detected': 'pill-ok',
+    'Minor Blemishes': 'pill-warn',
+    'Dark Spots / Bruising': 'pill-bad',
+    'Surface Rot': 'pill-bad',
+    'Unripe (Green Patches)': 'pill-warn',
+    'Rough Surface Texture': 'pill-warn',
+    'Low Visibility': 'pill-warn',
+  };
+  defectPills.innerHTML = data.detected_defects.map(d => {
+    const cls = pillStyles[d] || 'pill-warn';
+    return `<span class="pill ${cls}">${d}</span>`;
+  }).join('');
+
+  // Metrics
+  const m = data.metrics || {};
+  const metrics = [
+    ['Dark Spots', m.dark_spot_ratio !== undefined ? (m.dark_spot_ratio * 100).toFixed(1) + '%' : '--'],
+    ['Severe Rot', m.very_dark_ratio !== undefined ? (m.very_dark_ratio * 100).toFixed(1) + '%' : '--'],
+    ['Coverage', m.coverage !== undefined ? (m.coverage * 100).toFixed(1) + '%' : '--'],
+    ['Texture', m.glcm_contrast !== undefined ? m.glcm_contrast.toFixed(1) : '--'],
+  ];
+  metricRow.innerHTML = metrics.map(([l, v]) =>
+    `<div class="metric-box"><div class="metric-label">${l}</div><div class="metric-value">${v}</div></div>`
+  ).join('');
+
+  // Particles for Good results
+  if (data.quality === 'Good') spawnParticles(color);
+}
+
+// ── Scan ──
+scanBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  scanBtn.disabled = true;
+  spinner.style.display = 'inline-block';
+  rejectBanner.classList.add('hidden');
+
+  const form = new FormData();
+  form.append('file', selectedFile);
+
+  try {
+    const res = await fetch('/api/predict', { method: 'POST', body: form });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Server error');
+    }
+    const data = await res.json();
+    renderResult(data);
+  } catch (err) {
+    alert('Error: ' + err.message);
+  } finally {
+    scanBtn.disabled = false;
+    spinner.style.display = 'none';
+  }
+});
+
+// ── Init ──
+fetch('/api/health')
+  .then(r => r.json())
+  .then(d => console.log('K-Detect API:', d))
+  .catch(() => {});
 </script>
 </body>
 </html>

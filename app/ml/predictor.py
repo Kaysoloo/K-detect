@@ -1,6 +1,6 @@
 """
 K-Detect tomato quality predictor — SVM Phase 1.
-Uses trained SVM model with handcrafted CV features.
+Validates input is actually a tomato before classifying.
 """
 
 from __future__ import annotations
@@ -14,9 +14,12 @@ import joblib
 import numpy as np
 from PIL import Image
 
-# ── Load model bundle ──────────────────────────────────────
-_MODEL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models", "kdetect_svm.joblib")
+_MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "models", "kdetect_svm.joblib",
+)
 _bundle = None
+
 
 def _get_bundle():
     global _bundle
@@ -24,14 +27,67 @@ def _get_bundle():
         if os.path.exists(_MODEL_PATH):
             _bundle = joblib.load(_MODEL_PATH)
         else:
-            raise FileNotFoundError(f"Model not found at {_MODEL_PATH}. Run scripts/train_model.py first.")
+            raise FileNotFoundError(
+                f"Model not found at {_MODEL_PATH}. Run scripts/train_model.py first."
+            )
     return _bundle
 
 
-# ── Feature extraction (must match train_model.py exactly) ──
+# ── Tomato detection ───────────────────────────────────────
+def _is_tomato(img_bgr: np.ndarray) -> tuple[bool, float, str]:
+    """Check if the image contains a tomato. Returns (is_tomato, confidence, reason)."""
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+
+    # Red ranges (two wraps around 0/180 in OpenCV HSV)
+    red1 = cv2.inRange(hsv, (0, 30, 40), (18, 255, 255))
+    red2 = cv2.inRange(hsv, (160, 30, 40), (180, 255, 255))
+    red = cv2.bitwise_or(red1, red2)
+
+    # Orange/yellow range (ripe tomatoes, some defects)
+    orange = cv2.inRange(hsv, (10, 40, 50), (30, 255, 255))
+
+    # Green range (unripe tomatoes)
+    green = cv2.inRange(hsv, (30, 25, 30), (80, 255, 255))
+
+    # Brown/dark range (rot spots on tomatoes)
+    brown = cv2.inRange(hsv, (5, 20, 15), (25, 180, 120))
+
+    # Combine all tomato-like pixels
+    tomato_mask = cv2.bitwise_or(
+        cv2.bitwise_or(red, orange), cv2.bitwise_or(green, brown)
+    )
+
+    # Clean up noise
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    tomato_mask = cv2.morphologyEx(tomato_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    h, w = tomato_mask.shape
+    tomato_ratio = float(tomato_mask.sum()) / (h * w * 255)
+
+    # Also check: do we have a large contiguous blob? (tomato-shaped)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(tomato_mask, connectivity=8)
+    if num_labels > 1:
+        # Exclude background (label 0)
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        max_blob_ratio = float(areas.max()) / (h * w) if len(areas) > 0 else 0.0
+    else:
+        max_blob_ratio = 0.0
+
+    # Decision logic
+    if tomato_ratio < 0.03:
+        return False, 0.0, "No tomato-like colors detected in image."
+    if max_blob_ratio < 0.015:
+        return False, 0.0, "No distinct tomato shape found — colors are too scattered."
+    if tomato_ratio < 0.06:
+        return False, round(tomato_ratio * 100, 1), "Tomato region too small in the image."
+
+    # Confidence: how tomato-like is this image?
+    tomato_conf = min(99.0, tomato_ratio * 350 + max_blob_ratio * 200)
+    return True, round(tomato_conf, 1), ""
+
+
+# ── Feature extraction ─────────────────────────────────────
 def extract_features(image_bytes: bytes) -> np.ndarray:
-    """Extract the same 38-dim feature vector used during training."""
-    # Load image from bytes
     pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
     img = np.array(pil_img)
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -45,7 +101,6 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
 
     feats = []
 
-    # Color: mean, std, median per channel (3x3x3 = 27)
     for sp in [rgb, hsv, lab]:
         for ch in range(3):
             c = sp[:, :, ch].astype(np.float32) / 255.0
@@ -53,7 +108,6 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
             feats.append(float(np.std(c)))
             feats.append(float(np.median(c)))
 
-    # Texture: GLCM (5)
     gq = (gray // 8).clip(0, 31).astype(np.uint8)
     glcm = np.zeros((32, 32), dtype=np.float64)
     pairs = np.column_stack([gq[:, :-1].ravel(), gq[:, 1:].ravel()])
@@ -76,12 +130,10 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
     else:
         feats.extend([0.0] * 5)
 
-    # Dark spot ratios (2)
     gf = gray.astype(np.float32)
     feats.append(float((gf < 40).mean()))
     feats.append(float((gf < 20).mean()))
 
-    # Shape (3)
     hsv_u8 = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     m1 = cv2.inRange(hsv_u8, (0, 35, 35), (20, 255, 255))
     m2 = cv2.inRange(hsv_u8, (160, 35, 35), (180, 255, 255))
@@ -104,24 +156,16 @@ def extract_features(image_bytes: bytes) -> np.ndarray:
     else:
         feats.extend([0.0] * 3)
 
-    # Coverage (1)
     feats.append(float(mask.mean()))
-
     arr = np.array(feats, dtype=np.float32)
-    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
-    return arr
+    return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
 
-# ── Defect detection heuristics (for explainability) ───────
 def _detect_defects(feat_vec: np.ndarray) -> list[str]:
-    """Use the feature vector to infer visible defects for the user."""
     defects = []
-    # feat indices: 0-26=color stats, 27-31=GLCM, 32-33=dark spots, 34-36=shape, 37=coverage
     dark_ratio = float(feat_vec[32])
     very_dark = float(feat_vec[33])
     coverage = float(feat_vec[37])
-
-    # GLCM contrast (index 27) indicates texture roughness
     glcm_contrast = float(feat_vec[27]) if len(feat_vec) > 27 else 0.0
 
     if very_dark > 0.04:
@@ -131,8 +175,6 @@ def _detect_defects(feat_vec: np.ndarray) -> list[str]:
     elif dark_ratio > 0.05:
         defects.append("Minor Blemishes")
 
-    # Check green channel (unripe): HSV mean[1] is index 4, std[1] is index 5
-    # Green in RGB: g_mean idx 1, g_std idx 2
     if len(feat_vec) > 2:
         g_mean = float(feat_vec[1])
         r_mean = float(feat_vec[0])
@@ -143,39 +185,57 @@ def _detect_defects(feat_vec: np.ndarray) -> list[str]:
         defects.append("Rough Surface Texture")
 
     if coverage < 0.06:
-        defects.append("Tomato Not Clearly Detected")
+        defects.append("Low Visibility")
 
     if not defects:
-        defects = ["No major visible defects detected"]
+        defects = ["No visible defects detected"]
 
     return defects
 
 
-# ── Main prediction function ───────────────────────────────
 def predict_tomato_quality(image_bytes: bytes) -> dict[str, Any]:
-    """Run the full SVM prediction pipeline."""
+    """Full prediction pipeline with tomato validation."""
+    # ── 1. Decode image ──
+    pil_img = Image.open(BytesIO(image_bytes)).convert("RGB")
+    img_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+    # ── 2. Tomato check ──
+    is_tomato, tomato_conf, rejection_reason = _is_tomato(img_bgr)
+
+    if not is_tomato:
+        return {
+            "quality": "Not a Tomato",
+            "confidence": tomato_conf,
+            "quality_score": 0,
+            "detected_defects": [rejection_reason],
+            "metrics": {},
+            "model_version": "svm-phase1-v1",
+            "rejected": True,
+        }
+
+    # ── 3. Normal prediction ──
     bundle = _get_bundle()
     model = bundle["model"]
     scaler = bundle["scaler"]
     le = bundle["label_encoder"]
 
-    # Extract features
+    # Resize for feature extraction
+    img_bgr = cv2.resize(img_bgr, (224, 224))
+    img_bgr = cv2.GaussianBlur(img_bgr, (3, 3), 0)
+
+    # We already have the image decoded — rebuild features directly
+    # (avoid double-decode, but keep the existing extract_features for consistency)
     feat_vec = extract_features(image_bytes)
 
-    # Scale + predict
     X = scaler.transform(feat_vec.reshape(1, -1))
-
-    # Get probabilities
     probas = model.predict_proba(X)[0]
     pred_idx = int(np.argmax(probas))
     quality = str(le.inverse_transform([pred_idx])[0])
     confidence = round(float(probas[pred_idx]) * 100, 2)
     quality_score = int(round(probas[pred_idx] * 100))
 
-    # Detect defects from features
     defects = _detect_defects(feat_vec)
 
-    # Build metrics for display
     metrics = {
         "dark_spot_ratio": round(float(feat_vec[32]), 4),
         "very_dark_ratio": round(float(feat_vec[33]), 4),
@@ -183,7 +243,6 @@ def predict_tomato_quality(image_bytes: bytes) -> dict[str, Any]:
         "glcm_contrast": round(float(feat_vec[27]), 4),
     }
 
-    # Map confidence to quality_score (0-100 scale)
     if quality == "Good":
         quality_score = max(75, quality_score)
     elif quality == "Medium":
@@ -198,4 +257,5 @@ def predict_tomato_quality(image_bytes: bytes) -> dict[str, Any]:
         "detected_defects": defects,
         "metrics": metrics,
         "model_version": bundle.get("model_version", "svm-phase1-v1"),
+        "rejected": False,
     }
